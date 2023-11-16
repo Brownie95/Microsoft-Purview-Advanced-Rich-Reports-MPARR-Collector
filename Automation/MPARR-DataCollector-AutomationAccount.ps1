@@ -1,21 +1,3 @@
-#Check folder path and construct file names
-function GetFileName($Date, $Subscription, $OutputPath)
-{
-    if ($UseCustomParameters)
-    {
-        Write-Verbose " using custom parameter for filename"
-        $JSONfilename = ($Subscription + "_" + $pFilenameCode + ".json")
-    }
-    else {
-        Write-Verbose " using default for filename"
-        $JSONfilename = ($Subscription + "_" + $Date + ".json")
-       
-    }
-
-    Write-Verbose " filename: $jsonfilename"
-    return $OutputPath + $JSONfilename
-}
-
 function GetAuthToken
 {
     $body = @{grant_type="client_credentials";resource=$APIResource;client_id=$AppClientID;client_secret=$ClientSecretValue}
@@ -215,30 +197,8 @@ function Export-Logs
 
         $logs = buildLog $BaseURI $Subscription $TenantGUID $OfficeToken
     
-        
-        $JSONfileName = getFileName $Date $Subscription $outputPath
-    
         $output = FetchData $logs $OfficeToken $Subscription
-        if ($ExportToFileOnly)
-        {
-            $output | ConvertTo-Json -Depth 100 | Set-Content -Encoding UTF8 $JSONfilename
-            Write-host -ForegroundColor Cyan "---> Exporting log data to '" -NoNewline
-            Write-Host -ForegroundColor White -BackgroundColor DarkGray $JSONfilename -NoNewline
-            Write-Host -ForegroundColor Cyan "': " -NoNewline
-    
-        }
-        elseif ($ExportWithFile)
-        {
-            $output | ConvertTo-Json -Depth 100 | Set-Content -Encoding UTF8 $JSONfilename
-            Write-host -ForegroundColor Cyan "---> Exporting log data to '" -NoNewline
-            Write-Host -ForegroundColor White -BackgroundColor DarkGray $JSONfilename -NoNewline
-            Write-Host -ForegroundColor Cyan "': " -NoNewline
-            Publish-LogAnalytics $output $Subscription
-        }
-        else 
-        {
-            Publish-LogAnalytics $output $Subscription
-        }
+        Publish-LogAnalytics $output $Subscription
     }
 }
 
@@ -339,10 +299,7 @@ function Publish-LogAnalytics
             {
                 $count -= $BatchSize 
                 Write-Host "Error exporting to the Log Analytics. Exception: $($result.Exception)" -ForegroundColor Red
-                $errorFile = $OutputPath + "Error_" + $Subscription + "_" + $Date + ".json"
-                $eventJSON | Set-Content -Encoding utf8 -Path $errorFile
-                Write-Host "Failed records were saved to the $errorFile file. Please investigate them and import with ExportAIPData2LA script."
-            }
+                }
             $list.Clear()
             $list.TrimToSize()            
         }
@@ -355,17 +312,12 @@ function Publish-LogAnalytics
         {
             $count -= $elements 
             Write-Host "Error exporting to the Log Analytics. Exception: $($result.Exception)" -ForegroundColor Red
-            $errorFile = $OutputPath + "Error_" + $Subscription + "_" + $Date + ".json"
-            $eventJSON | Set-Content -Encoding utf8 -Path $errorFile
-            Write-Host "Failed records were saved to the $errorFile file. Please investigate them and import with ExportAIPData2LA script."
-        }
+            }
     }
     Write-Host "$count elements exported for $Subscription."
 }
 
 # Script variables 01  --> Update everything in this section:
-$containerPath = (Get-AutomationVariable -Name ContainerPath)
-$OutputPath = $containerPath
 $BatchSize = 500
 
 #API Endpoint URLs ---> Don't Update anything here
@@ -392,18 +344,7 @@ if ($Cloud -ne $null)
 }
 
 # Subscriptions
-$Subscriptions = @()
-$json = (Get-AutomationVariable -Name AuditSources)
-
-[PSCustomObject]$schemas = ConvertFrom-Json -InputObject $json
-foreach ($item in $schemas.psobject.Properties)
-{
-    if ($schemas."$($item.Name)" -eq "True")
-    {
-        $Subscriptions += $item.Name
-    }
-}
-Write-Host "Subscriptions list: $Subscriptions"   
+$Subscriptions = @('DLP.All') # Other subscription Options'Audit.AzureActiveDirectory','Audit.Exchange','Audit.SharePoint','Audit.General'
 
 # Script variables 02  ---> Don't Update anything here:
 $loginURL = "https://login.microsoftonline.com/"
@@ -413,39 +354,7 @@ $Date = (Get-date).AddDays(-1)
 $Date = $Date.ToString('MM-dd-yyyy_hh-mm-ss')
 
 #region Timestamp
-$timestampFile = $OutputPath + "timestamp.json"
-# read startTime from the file
-if (-not (Test-Path -Path $timestampFile))
-{
-    # if file not present create new value
-    $startTime = (Get-Date).AddHours(-23).ToString("yyyy-MM-ddTHH:mm:ss")
-}
-else 
-{
-    $json = Get-Content -Raw -Path $timestampFile
-    [PSCustomObject]$timestamp = ConvertFrom-Json -InputObject $json
-    $startTime = $timestamp.startTime.ToString("yyyy-MM-ddTHH:mm:ss")   
-    # check if startTime greater than 7 days (7 days is max value)
-    if ((New-TimeSpan -Start $startTime -End ([datetime]::Now)).TotalDays -gt 7)
-    {
-        $startTime = (Get-Date).AddDays(-7).AddMinutes(30).ToString("yyyy-MM-ddTHH:mm:ss")
-        Write-Host "StartTime is older than 7 days. Setting to the correct value: $startTime" -ForegroundColor Yellow
-        Write-Host "Records with CreationTime older than two days will be ingested with current time for the TimeGenerated column!" -ForegroundColor Red
-    }
-}
+$startTime = (Get-Date).AddHours(-23).ToString("yyyy-MM-ddTHH:mm:ss")
 $endTime = (Get-Date).ToString("yyyy-MM-ddTHH:mm:ss")
-# check if difference between start and end times bigger than 24 hours 
-if ((New-TimeSpan -Start $startTime -End $endTime).TotalHours -gt 24)
-{
-    $endTime = ([datetime]$startTime).AddHours(23).ToString("yyyy-MM-ddTHH:mm:ss")
-    Write-Host "Timeframe based on StartTime is bigger than 24 hours. Setting to the correct value: $startTime" -ForegroundColor Yellow
-    if ((New-TimeSpan -Start $startTime -End ([datetime]::Now)).TotalDays -gt 2)
-    {
-        Write-Host "Records with CreationTime older than two days will be ingested with current time for the TimeGenerated column!" -ForegroundColor Red
-    }
-}
-$timestamp = @{"startTime" = $endTime}
-ConvertTo-Json -InputObject $timestamp | Out-File -FilePath $timestampFile -Force
-
 
 Export-Logs
